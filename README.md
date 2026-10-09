@@ -136,7 +136,7 @@ IncreaseGuessCount(InChattingPlayerController);
 - 마지막 기회를 틀린 플레이어는 `ClientRPCSetChatInputEnabled(false)`로 입력창이 잠기고, 전체에 시도 소진 안내가 전달됩니다.
 - `ResetGame`은 새 정답을 만들고 `SubmittedGuesses`를 비우며 모든 플레이어의 횟수를 0으로 되돌리고 입력창을 다시 엽니다.
 
-## 네트워크 책임
+## 네트워크
 
 - **서버 전용 상태:** 정답과 라운드별 추측 집합은 `ANumGameModeBase`가 관리합니다. 이 상태는 클라이언트에 복제하지 않습니다.
 - **플레이어별 복제 상태:** `ANumPlayerState`의 이름, 현재 횟수, 최대 횟수는 `DOREPLIFETIME`으로 복제합니다.
