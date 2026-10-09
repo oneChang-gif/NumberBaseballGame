@@ -17,16 +17,6 @@ void ANumGameModeBase::OnPostLogin(AController* NewPlayer)
 {
     Super::OnPostLogin(NewPlayer);
 
-    //ANumGameStateBase* NumGameStateBase = Cast<ANumGameStateBase>(GameState);
-    //if (NumGameStateBase)
-	//{
-	//	NumGameStateBase->MulticastRPCBroadcastLoginMessage(TEXT("XXXXXXX"));
-	//}
-	//ANumPlayerController* NumPlayerController = Cast<ANumPlayerController>(NewPlayer);
-	//if (IsValid(NumPlayerController) == true)
-	//{
-	//	AllPlayerControllers.Add(NumPlayerController);
-	//}
 	ANumPlayerController* NumPlayerController = Cast<ANumPlayerController>(NewPlayer);
 	if (IsValid(NumPlayerController) == true)
 	{
@@ -79,8 +69,6 @@ bool ANumGameModeBase::IsGuessNumberString(const FString& InNumberString)
 
 	for (TCHAR Digit : InNumberString)
 	{
-		// The game uses digits from 1 through 9. Uniqueness is checked separately
-		// so the caller can show a more specific message for repeated digits.
 		if (Digit < TEXT('1') || Digit > TEXT('9'))
 		{
 			return false;
