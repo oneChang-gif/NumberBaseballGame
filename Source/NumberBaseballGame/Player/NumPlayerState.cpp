@@ -1,4 +1,4 @@
-﻿#include "Player/NumPlayerState.h"
+#include "Player/NumPlayerState.h"
 
 #include "Net/UnrealNetwork.h"
 

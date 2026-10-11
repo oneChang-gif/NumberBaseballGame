@@ -1,4 +1,4 @@
-﻿#include "UI/NumChatInput.h"
+#include "UI/NumChatInput.h"
 
 #include "Components/EditableTextBox.h"
 #include "Player/NumPlayerController.h"

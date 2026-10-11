@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include "CoreMinimal.h"
 #include "GameFramework/PlayerState.h"
@@ -8,7 +8,7 @@ UCLASS()
 class NUMBERBASEBALLGAME_API ANumPlayerState : public APlayerState
 {
 	GENERATED_BODY()
-	
+
 public:
 	ANumPlayerState();
 
@@ -25,5 +25,4 @@ public:
 
 	UPROPERTY(Replicated)
 	int32 MaxGuessCount;
-
 };

@@ -1,18 +1,18 @@
-﻿#pragma once
+#pragma once
 
 #include "CoreMinimal.h"
 #include "GameFramework/PlayerController.h"
 #include "NumPlayerController.generated.h"
 
 class UNumChatInput;
+class UNumTimeWidget;
 
 UCLASS()
 class NUMBERBASEBALLGAME_API ANumPlayerController : public APlayerController
 {
 	GENERATED_BODY()
-	
-public:
 
+public:
 	ANumPlayerController();
 
 	virtual void BeginPlay() override;
@@ -32,8 +32,13 @@ public:
 
 	virtual void GetLifetimeReplicatedProps(TArray<class FLifetimeProperty>& OutLifetimeProps) const override;
 
-
 protected:
+	UPROPERTY(EditDefaultsOnly, Category = "Turn Practice")
+	TSubclassOf<UNumTimeWidget> TimeWidgetClass;
+
+	UPROPERTY()
+	TObjectPtr<UNumTimeWidget> TimeWidgetInstance;
+
 	UPROPERTY(EditDefaultsOnly)
 	TSubclassOf<UNumChatInput> ChatInputWidgetClass;
 
@@ -51,5 +56,4 @@ protected:
 public:
 	UPROPERTY(Replicated, BlueprintReadOnly)
 	FText NotificationText;
-
 };

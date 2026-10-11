@@ -2,7 +2,7 @@
 #include "Player/NumPlayerController.h"
 #include "EngineUtils.h"
 #include "Player/NumPlayerState.h"
-#include "NumGameStateBase.h"
+#include "Game/NumGameStateBase.h"
 
 void ANumGameModeBase::BeginPlay()
 {
@@ -11,30 +11,61 @@ void ANumGameModeBase::BeginPlay()
 	SecretNumberString = GenerateSecretNumber();
 	SubmittedGuesses.Reset();
 	UE_LOG(LogTemp, Warning, TEXT("라운드 정답: %s"), *SecretNumberString);
+
+	GetWorldTimerManager().SetTimer(TurnClockHandle, this,
+		&ANumGameModeBase::UpdateTurnClock, 1.0f, true);
+	StartTurnSystem();
 }
 
 void ANumGameModeBase::OnPostLogin(AController* NewPlayer)
 {
-    Super::OnPostLogin(NewPlayer);
+	Super::OnPostLogin(NewPlayer);
 
-	ANumPlayerController* NumPlayerController = Cast<ANumPlayerController>(NewPlayer);
-	if (IsValid(NumPlayerController) == true)
+	ANumPlayerController* NumPC = Cast<ANumPlayerController>(NewPlayer);
+	if (IsValid(NumPC) == true)
 	{
-		NumPlayerController->NotificationText = FText::FromString(TEXT("Connected to the game server."));
+		NumPC->NotificationText = FText::FromString(TEXT("Connected to the game server."));
 
-		AllPlayerControllers.Add(NumPlayerController);
+		AllPlayerControllers.Add(NumPC);
 
-		ANumPlayerState* CXPS = NumPlayerController->GetPlayerState<ANumPlayerState>();
-		if (IsValid(CXPS) == true)
+		ANumPlayerState* NumPS = NumPC->GetPlayerState<ANumPlayerState>();
+		if (IsValid(NumPS) == true)
 		{
-			CXPS->PlayerNameString = TEXT("Player") + FString::FromInt(AllPlayerControllers.Num());
+			NumPS->PlayerNameString = TEXT("Player") + FString::FromInt(AllPlayerControllers.Num());
 		}
 
 		ANumGameStateBase* NumGameStateBase = GetGameState<ANumGameStateBase>();
-		if (IsValid(NumGameStateBase) == true)
+		if (IsValid(NumGameStateBase) && IsValid(NumPS))
 		{
-			NumGameStateBase->MulticastRPCBroadcastLoginMessage(CXPS->PlayerNameString);
+			NumGameStateBase->MulticastRPCBroadcastLoginMessage(NumPS->PlayerNameString);
 		}
+		if (HasActorBegunPlay())
+		{
+			StartTurnSystem();
+		}
+	}
+}
+
+void ANumGameModeBase::Logout(AController* Exiting)
+{
+	const int32 RemovedIndex = AllPlayerControllers.IndexOfByKey(Cast<ANumPlayerController>(Exiting));
+	const bool bCurrentPlayerLeft = RemovedIndex != INDEX_NONE && RemovedIndex == CurrentTurnPlayerIndex;
+	if (RemovedIndex != INDEX_NONE)
+	{
+		AllPlayerControllers.RemoveAt(RemovedIndex);
+		if (RemovedIndex <= CurrentTurnPlayerIndex)
+		{
+			--CurrentTurnPlayerIndex;
+		}
+	}
+	Super::Logout(Exiting);
+	if (AllPlayerControllers.IsEmpty())
+	{
+		StopTurnSystem();
+	}
+	else if (bCurrentPlayerLeft)
+	{
+		StartNextTurn();
 	}
 }
 
@@ -116,7 +147,6 @@ void ANumGameModeBase::PrintChatMessageString(ANumPlayerController* InChattingPl
 		return;
 	}
 
-	// Check the attempt limit first so it takes priority over all input errors.
 	if (PlayerState->CurrentGuessCount >= PlayerState->MaxGuessCount)
 	{
 		InChattingPlayerController->ClientRPCSetChatInputEnabled(false);
@@ -124,12 +154,18 @@ void ANumGameModeBase::PrintChatMessageString(ANumPlayerController* InChattingPl
 			+ TEXT(": 기회를 모두 사용했습니다.");
 		for (TActorIterator<ANumPlayerController> It(GetWorld()); It; ++It)
 		{
-			ANumPlayerController* NumPlayerController = *It;
-			if (IsValid(NumPlayerController))
+			ANumPlayerController* NumPC = *It;
+			if (IsValid(NumPC))
 			{
-				NumPlayerController->ClientRPCPrintChatMessageString(NoAttemptsMessage);
+				NumPC->ClientRPCPrintChatMessageString(NoAttemptsMessage);
 			}
 		}
+		return;
+	}
+
+	if (!CanSubmitDuringTurn(InChattingPlayerController))
+	{
+		InChattingPlayerController->ClientRPCPrintChatMessageString(TEXT("현재 입력할 수 있는 턴이 아닙니다."));
 		return;
 	}
 
@@ -160,6 +196,7 @@ void ANumGameModeBase::PrintChatMessageString(ANumPlayerController* InChattingPl
 	}
 
 	SubmittedGuesses.Add(InChatMessageString);
+	bSubmittedThisTurn = true;
 	IncreaseGuessCount(InChattingPlayerController);
 	const FString JudgeResultString = JudgeResult(SecretNumberString, InChatMessageString);
 	const int32 StrikeCount = FCString::Atoi(*JudgeResultString.Left(1));
@@ -167,10 +204,10 @@ void ANumGameModeBase::PrintChatMessageString(ANumPlayerController* InChattingPl
 		+ TEXT(": ") + InChatMessageString + TEXT(" -> ") + JudgeResultString;
 	for (TActorIterator<ANumPlayerController> It(GetWorld()); It; ++It)
 	{
-		ANumPlayerController* NumPlayerController = *It;
-		if (IsValid(NumPlayerController) == true)
+		ANumPlayerController* NumPC = *It;
+		if (IsValid(NumPC) == true)
 		{
-			NumPlayerController->ClientRPCPrintChatMessageString(CombinedMessageString);
+			NumPC->ClientRPCPrintChatMessageString(CombinedMessageString);
 		}
 	}
 
@@ -181,64 +218,207 @@ void ANumGameModeBase::PrintChatMessageString(ANumPlayerController* InChattingPl
 			+ TEXT(": 기회를 모두 사용했습니다.");
 		for (TActorIterator<ANumPlayerController> It(GetWorld()); It; ++It)
 		{
-			ANumPlayerController* NumPlayerController = *It;
-			if (IsValid(NumPlayerController))
+			ANumPlayerController* NumPC = *It;
+			if (IsValid(NumPC))
 			{
-				NumPlayerController->ClientRPCPrintChatMessageString(NoAttemptsMessage);
+				NumPC->ClientRPCPrintChatMessageString(NoAttemptsMessage);
 			}
 		}
 	}
 
-	JudgeGame(InChattingPlayerController, StrikeCount);
+	if (StrikeCount == 3)
+	{
+		JudgeGame(InChattingPlayerController, StrikeCount);
+		return;
+	}
+	FinishCurrentTurn();
+}
+
+void ANumGameModeBase::StartTurnSystem()
+{
+	ANumGameStateBase* NumGameState = GetGameState<ANumGameStateBase>();
+	if (!IsValid(NumGameState) || NumGameState->bTurnInProgress || AllPlayerControllers.IsEmpty())
+	{
+		return;
+	}
+
+	StopTurnSystem();
+	CurrentTurnPlayerIndex = INDEX_NONE;
+	StartNextTurn();
+}
+
+void ANumGameModeBase::StartNextTurn()
+{
+	ANumGameStateBase* NumGameState = GetGameState<ANumGameStateBase>();
+	if (!IsValid(NumGameState))
+	{
+		return;
+	}
+	NumGameState->bTurnInProgress = false;
+	NumGameState->CurrentTurnPlayerState = nullptr;
+	NumGameState->RemainingTurnSeconds = 0;
+
+	for (int32 Checked = 0; Checked < AllPlayerControllers.Num(); ++Checked)
+	{
+		CurrentTurnPlayerIndex = (CurrentTurnPlayerIndex + 1) % AllPlayerControllers.Num();
+		ANumPlayerController* NumPC = AllPlayerControllers[CurrentTurnPlayerIndex];
+		ANumPlayerState* NumPS = IsValid(NumPC) ? NumPC->GetPlayerState<ANumPlayerState>() : nullptr;
+		if (!IsValid(NumPS) || NumPS->CurrentGuessCount >= NumPS->MaxGuessCount)
+		{
+			continue;
+		}
+
+		NumGameState->CurrentTurnPlayerState = NumPS;
+		NumGameState->RemainingTurnSeconds = FMath::Max(1, TurnDurationSeconds);
+		NumGameState->bTurnInProgress = true;
+		bSubmittedThisTurn = false;
+		NumPC->ClientRPCSetChatInputEnabled(true);
+		for (const auto& Other : AllPlayerControllers)
+		{
+			if (IsValid(Other))
+			{
+				Other->ClientRPCPrintChatMessageString(NumPS->PlayerNameString + TEXT("님의 턴입니다."));
+			}
+		}
+		NumGameState->ForceNetUpdate();
+		return;
+	}
+	StopTurnSystem();
+	for (const auto& NumPC : AllPlayerControllers)
+	{
+		if (IsValid(NumPC) && IsValid(NumPC->GetPlayerState<ANumPlayerState>()))
+		{
+			JudgeGame(NumPC, 0);
+			return;
+		}
+	}
+}
+
+void ANumGameModeBase::UpdateTurnClock()
+{
+	ANumGameStateBase* NumGameState = GetGameState<ANumGameStateBase>();
+	if (!IsValid(NumGameState))
+	{
+		return;
+	}
+
+	NumGameState->ForceNetUpdate();
+	if (!NumGameState->bTurnInProgress)
+	{
+		return;
+	}
+	NumGameState->RemainingTurnSeconds = FMath::Max(0, NumGameState->RemainingTurnSeconds - 1);
+	NumGameState->ForceNetUpdate();
+	if (NumGameState->RemainingTurnSeconds == 0)
+	{
+		FinishCurrentTurn();
+	}
+}
+
+bool ANumGameModeBase::CanSubmitDuringTurn(ANumPlayerController* Player) const
+{
+	const ANumGameStateBase* NumGameState = GetGameState<ANumGameStateBase>();
+	const ANumPlayerState* NumPS = IsValid(Player) ? Player->GetPlayerState<ANumPlayerState>() : nullptr;
+	return IsValid(NumGameState) && IsValid(NumPS)
+		&& NumGameState->bTurnInProgress && NumGameState->RemainingTurnSeconds > 0
+		&& NumGameState->CurrentTurnPlayerState == NumPS && !bSubmittedThisTurn
+		&& NumPS->CurrentGuessCount < NumPS->MaxGuessCount;
+}
+
+void ANumGameModeBase::FinishCurrentTurn()
+{
+	ANumGameStateBase* NumGameState = GetGameState<ANumGameStateBase>();
+	if (!IsValid(NumGameState) || !NumGameState->bTurnInProgress)
+	{
+		return;
+	}
+	NumGameState->bTurnInProgress = false;
+	ANumPlayerController* NumPC = AllPlayerControllers.IsValidIndex(CurrentTurnPlayerIndex)
+		? AllPlayerControllers[CurrentTurnPlayerIndex].Get() : nullptr;
+	ANumPlayerState* NumPS = IsValid(NumPC) ? NumPC->GetPlayerState<ANumPlayerState>() : nullptr;
+	if (IsValid(NumPS) && !bSubmittedThisTurn && NumPS->CurrentGuessCount < NumPS->MaxGuessCount)
+	{
+		IncreaseGuessCount(NumPC);
+		const bool bExhausted = NumPS->CurrentGuessCount >= NumPS->MaxGuessCount;
+		const FString Message = NumPS->GetPlayerInfoString() + (bExhausted
+			? TEXT(": 기회를 모두 사용했습니다.") : TEXT(": 시간 초과로 기회를 1회 사용했습니다."));
+		for (const auto& Other : AllPlayerControllers)
+		{
+			if (IsValid(Other))
+			{
+				Other->ClientRPCPrintChatMessageString(Message);
+			}
+		}
+		if (bExhausted)
+		{
+			NumPC->ClientRPCSetChatInputEnabled(false);
+		}
+	}
+	StartNextTurn();
+}
+
+void ANumGameModeBase::StopTurnSystem()
+{
+	bSubmittedThisTurn = false;
+	ANumGameStateBase* NumGameState = GetGameState<ANumGameStateBase>();
+	if (IsValid(NumGameState))
+	{
+		NumGameState->bTurnInProgress = false;
+		NumGameState->RemainingTurnSeconds = 0;
+		NumGameState->CurrentTurnPlayerState = nullptr;
+		NumGameState->ForceNetUpdate();
+	}
 }
 
 void ANumGameModeBase::IncreaseGuessCount(ANumPlayerController* InChattingPlayerController)
 {
-	ANumPlayerState* CXPS = InChattingPlayerController->GetPlayerState<ANumPlayerState>();
-	if (IsValid(CXPS) == true)
+	ANumPlayerState* NumPS = InChattingPlayerController->GetPlayerState<ANumPlayerState>();
+	if (IsValid(NumPS) == true)
 	{
-		CXPS->CurrentGuessCount++;
+		NumPS->CurrentGuessCount++;
 	}
 }
 
 void ANumGameModeBase::ResetGame()
 {
+	StopTurnSystem();
 	SecretNumberString = GenerateSecretNumber();
 	SubmittedGuesses.Reset();
 	UE_LOG(LogTemp, Warning, TEXT("라운드 정답: %s"), *SecretNumberString);
 
-	for (const auto& NumPlayerController : AllPlayerControllers)
+	for (const auto& NumPC : AllPlayerControllers)
 	{
-		if (!IsValid(NumPlayerController))
+		if (!IsValid(NumPC))
 		{
 			continue;
 		}
 
-		ANumPlayerState* CXPS = NumPlayerController->GetPlayerState<ANumPlayerState>();
-		if (IsValid(CXPS) == true)
+		ANumPlayerState* NumPS = NumPC->GetPlayerState<ANumPlayerState>();
+		if (IsValid(NumPS) == true)
 		{
-			CXPS->CurrentGuessCount = 0;
+			NumPS->CurrentGuessCount = 0;
 		}
-		NumPlayerController->ClientRPCSetChatInputEnabled(true);
+		NumPC->ClientRPCSetChatInputEnabled(true);
 	}
+	StartTurnSystem();
 }
 
 void ANumGameModeBase::JudgeGame(ANumPlayerController* InChattingPlayerController, int InStrikeCount)
 {
 	if (3 == InStrikeCount)
 	{
-		ANumPlayerState* CXPS = InChattingPlayerController->GetPlayerState<ANumPlayerState>();
-		if (!IsValid(CXPS))
+		ANumPlayerState* NumPS = InChattingPlayerController->GetPlayerState<ANumPlayerState>();
+		if (!IsValid(NumPS))
 		{
 			return;
 		}
 
-		for (const auto& NumPlayerController : AllPlayerControllers)
+		for (const auto& NumPC : AllPlayerControllers)
 		{
-			if (IsValid(NumPlayerController) == true)
+			if (IsValid(NumPC) == true)
 			{
-				FString CombinedMessageString = CXPS->PlayerNameString + TEXT(" has won the game.");
-				NumPlayerController->NotificationText = FText::FromString(CombinedMessageString);
+				FString CombinedMessageString = NumPS->PlayerNameString + TEXT(" has won the game.");
+				NumPC->NotificationText = FText::FromString(CombinedMessageString);
 			}
 		}
 		ResetGame();
@@ -246,12 +426,16 @@ void ANumGameModeBase::JudgeGame(ANumPlayerController* InChattingPlayerControlle
 	else
 	{
 		bool bIsDraw = true;
-		for (const auto& NumPlayerController : AllPlayerControllers)
+		for (const auto& NumPC : AllPlayerControllers)
 		{
-			ANumPlayerState* CXPS = NumPlayerController->GetPlayerState<ANumPlayerState>();
-			if (IsValid(CXPS) == true)
+			if (!IsValid(NumPC))
 			{
-				if (CXPS->CurrentGuessCount < CXPS->MaxGuessCount)
+				continue;
+			}
+			ANumPlayerState* NumPS = NumPC->GetPlayerState<ANumPlayerState>();
+			if (IsValid(NumPS) == true)
+			{
+				if (NumPS->CurrentGuessCount < NumPS->MaxGuessCount)
 				{
 					bIsDraw = false;
 					break;
@@ -261,11 +445,11 @@ void ANumGameModeBase::JudgeGame(ANumPlayerController* InChattingPlayerControlle
 
 		if (true == bIsDraw)
 		{
-			for (const auto& NumPlayerController : AllPlayerControllers)
+			for (const auto& NumPC : AllPlayerControllers)
 			{
-				if (IsValid(NumPlayerController) == true)
+				if (IsValid(NumPC) == true)
 				{
-					NumPlayerController->NotificationText = FText::FromString(TEXT("Draw..."));
+					NumPC->NotificationText = FText::FromString(TEXT("Draw..."));
 				}
 			}
 			ResetGame();

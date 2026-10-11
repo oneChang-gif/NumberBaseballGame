@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include "CoreMinimal.h"
 #include "GameFramework/Pawn.h"
@@ -17,7 +17,7 @@ protected:
 
 	virtual void PossessedBy(AController* NewController) override;
 
-public:	
+public:
 	virtual void Tick(float DeltaTime) override;
 
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;

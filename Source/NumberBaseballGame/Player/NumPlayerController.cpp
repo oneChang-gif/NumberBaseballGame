@@ -1,11 +1,10 @@
 ﻿#include "Player/NumPlayerController.h"
-#include "Kismet/KismetSystemLibrary.h"
 #include "Kismet/GameplayStatics.h"
 #include "Game/NumGameModeBase.h"
 #include "NumberBaseballGame.h"
-#include "EngineUtils.h"
 #include "Net/UnrealNetwork.h"
 #include "UI/NumChatInput.h"
+#include "UI/NumTimeWidget.h"
 
 void ANumPlayerController::BeginPlay()
 {
@@ -19,6 +18,20 @@ void ANumPlayerController::BeginPlay()
 	FInputModeUIOnly InputModeUIOnly;
 	SetInputMode(InputModeUIOnly);
 
+	if (!TimeWidgetClass)
+	{
+		TimeWidgetClass = LoadClass<UNumTimeWidget>(nullptr,
+			TEXT("/Game/NumGame/Blueprint/UI/WBP_Time.WBP_Time_C"));
+	}
+	if (TimeWidgetClass)
+	{
+		TimeWidgetInstance = CreateWidget<UNumTimeWidget>(this, TimeWidgetClass);
+		if (IsValid(TimeWidgetInstance))
+		{
+			TimeWidgetInstance->AddToViewport();
+		}
+	}
+
 	if (IsValid(ChatInputWidgetClass) == true)
 	{
 		ChatInputWidgetInstance = CreateWidget<UNumChatInput>(this, ChatInputWidgetClass);
@@ -31,7 +44,7 @@ void ANumPlayerController::BeginPlay()
 		if (IsValid(NotificationTextWidgetInstance) == true)
 		{
 			NotificationTextWidgetInstance->AddToViewport();
-		}			
+		}
 	}
 }
 
@@ -46,17 +59,13 @@ void ANumPlayerController::SetChatMessageString(const FString& InChatMessageStri
 
 	if (IsLocalController() == true)
 	{
-		// The server validates the complete input and adds the updated attempt count.
 		ServerRPCPrintChatMessageString(InChatMessageString);
 	}
 }
 
 void ANumPlayerController::PrintChatMessageString(const FString& InChatMessageString)
 {
-	//FString NetModeString = NumberBaseballGameFunctionLibrary::GetNetModeString(this);
-	//FString CombinedMessageString = FString::Printf(TEXT("%s: %s"), *NetModeString, *InChatMessageString);
-	//NumberBaseballGameFunctionLibrary::MyPrintString(this, CombinedMessageString, 10.f);
-	
+
 	NumberBaseballGameFunctionLibrary::MyPrintString(this, InChatMessageString, 10.f);
 }
 
@@ -75,21 +84,13 @@ void ANumPlayerController::ClientRPCSetChatInputEnabled_Implementation(bool bEna
 
 void ANumPlayerController::ServerRPCPrintChatMessageString_Implementation(const FString& InChatMessageString)
 {
-	//for (TActorIterator<ANumPlayerController> It(GetWorld()); It; ++It)
-	//{
-	//	ANumPlayerController* NumPlayerController = *It;
-	//	if (IsValid(NumPlayerController) == true)
-	//	{
-	//		NumPlayerController->ClientRPCPrintChatMessageString(InChatMessageString);
-	//	}
-	//}
 	AGameModeBase* GM = UGameplayStatics::GetGameMode(this);
 	if (IsValid(GM) == true)
 	{
-		ANumGameModeBase* CXGM = Cast<ANumGameModeBase>(GM);
-		if (IsValid(CXGM) == true)
+		ANumGameModeBase* NumGM = Cast<ANumGameModeBase>(GM);
+		if (IsValid(NumGM) == true)
 		{
-			CXGM->PrintChatMessageString(this, InChatMessageString);
+			NumGM->PrintChatMessageString(this, InChatMessageString);
 		}
 	}
 }
